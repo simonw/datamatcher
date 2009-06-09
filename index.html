@@ -1,0 +1,995 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN"
+  "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <title>Data matcher</title>
+  <script type="text/javascript" src="jquery-1.3.2.js"></script>
+  <script type="text/javascript" src="ui.core.js"></script>
+  <script type="text/javascript" src="ui.autocomplete.js"></script>
+  <link rel="stylesheet" type="text/css" href="ui.autocomplete.css">
+  <script type="text/javascript">
+function levenshtein(one, two) {
+    // Adapted from http://jsfromhell.com/string/levenshtein
+    var s = one.split('');
+    var l = s.length;
+    var c = two.split('');
+    var t = c.length;
+    var i, j, m, n;
+    if (!(l || t)) {
+        return Math.max(l, t);
+    }
+    for (var a = [], i = l + 1; i; a[--i] = [i]);
+    for (i = t + 1; a[0][--i] = i;);
+    for (i = -1, m = s.length; ++i < m;) {
+        for (j = -1, n = c.length; ++j < n;) {
+            a[(i *= 1) + 1][(j *= 1) + 1] = Math.min(
+                a[i][j + 1] + 1, a[i + 1][j] + 1, a[i][j] + (s[i] != c[j])
+            );
+        }
+    }
+    return a[l][t];
+};
+
+jQuery(function($) {
+    $('#matcher,#output').hide();
+    
+    $('#matcher form').submit(function(ev) {
+        $('#output textarea').val('Working...');
+        ev.preventDefault();
+        var s = '';
+        $('#matcher tr').each(function() {
+            if ($(this).find('th').length) {
+                return true; // continue
+            }
+            var key = $(this).find('td:eq(0)').text();
+            var suggested = $(this).find('td:eq(1)').text();
+            if ($(this).find(':checkbox')[0].checked) {
+                return true; // continue
+            }
+            var override = $(this).find(':text').val();
+            var value = override || suggested;
+            s += (key + '\t' + value + '\n');
+        });
+        $('#output').find('textarea').val(s).end().show();
+    });
+    
+    $('#inputs').submit(function(ev) {
+        ev.preventDefault();
+        var match = $.trim($('#input-match').val());
+        var matches = match.split('\n');
+        var against = $.trim($('#input-against').val());
+        var againsts = against.split('\n');
+        var stopphrases = $.trim($('#stopphrases').val()).split('\n');
+        if (!match || !against) {
+            alert('Fill in both fields');
+            return;
+        }
+        $('#inputs').hide();
+        
+        function normalise(s) {
+            for (var i = 0, stopphrase; stopphrase = stopphrases[i]; i++) {
+                s = s.replace(stopphrase, '');
+            }
+            s = s.toLowerCase().replace(/[^a-z]/g, '');
+            return s;
+        }
+        
+        // Build an array for quick lookups
+        var normalised_matches = {};
+        for (var i = 0, j = matches.length; i < j; i++) {
+            var match = matches[i];
+            normalised_matches[normalise(match)] = match;
+        }
+        var normalised_againsts = {};
+        for (var i = 0, j = againsts.length; i < j; i++) {
+            var match = againsts[i];
+            normalised_againsts[normalise(match)] = match;
+        }
+        
+        var todo = matches.length;
+        var done = 0;
+        
+        function process(s) {
+            var tr = $('<tr />');
+            tr.append($('<td />').text(s));
+            // Calculate distances of everything else against
+            
+            var matched;
+            var distance = 0;
+            
+            var normalised_s = normalise(s);
+            if (typeof normalised_againsts[normalised_s] !== 'undefined') {
+                matched = normalised_againsts[normalised_s];
+            } else {
+                // use levenshtein
+                var distances = {};
+                for (var i = 0, against_s; against_s = againsts[i]; i++) {
+                    distances[against_s] = levenshtein(
+                        normalised_s, normalise(against_s)
+                    );
+                }
+                againsts.sort(function(a, b) {
+                    if (distances[a] == distances[b]) {
+                        return 0;
+                    }
+                    if (distances[a] < distances[b]) {
+                        return -1;
+                    }
+                    if (distances[a] > distances[b]) {
+                        return 1;
+                    }
+                });
+                matched = againsts[0];
+                distance = distances[matched];
+            }
+            var td = $('<td />').text(matched);
+            if (distance == 0) {
+                td.css('background-color', '#90EE90');
+            } else if (distance >= 6) {
+                td.css('background-color', 'red');
+            } else {
+                td.css('background-color', 'pink');
+            }
+            td.attr('title', distance);
+            tr.append(td);
+            
+            var input_td = $('<td><input type="text"></td>');
+            tr.append(input_td)
+            var ignore_td = $('<td><input type="checkbox"></td>');
+            tr.append(ignore_td);
+            
+            $('table').append(tr);
+            done++;
+            showDone();
+        }
+        
+        function showDone() {
+            $('#progress').text(done + '/' + todo);
+        }
+        
+        var interval = setInterval(function() {
+            $.each(matches.slice(done, done + 10), function(i, s) {
+                process(s);
+            });
+            if (done == matches.length) {
+                clearInterval(interval);
+                $('#matcher').show();
+                
+                $('#matcher td :text').autocomplete({
+                    data: againsts,
+                    matchContains: true
+                });
+                
+            }
+        }, 100);
+    });
+});
+</script>
+  <style type="text/css">
+  table {
+    width: 80%;
+  }
+  table th {
+    border-bottom: 1px solid black;
+  }
+  textarea {
+    width: 70%;
+    height: 15em;
+  }
+  textarea#stopphrases {
+    height: 5em;
+  }
+  #output textarea {
+    height: 30em;
+  }
+  </style>
+</head>
+<body>
+<h1>Data matcher</h1>
+<p>Map one set of data to another</p>
+<form id="inputs">
+<h2>Inputs</h2>
+<p>Enter the data you want to match:</p>
+<textarea id="input-match">Darlington
+Durham
+Gateshead
+Hartlepool
+Middlesbrough
+Newcastle upon Tyne
+North Tyneside
+Northumberland
+Redcar and Cleveland
+South Tyneside
+Stockton-on-Tees
+Sunderland
+Babergh
+Basildon
+Bedford
+Braintree
+Breckland
+Brentwood
+Broadland
+Broxbourne
+Cambridge City Council
+Castle Point
+Central Bedfordshire
+Chelmsford
+Colchester
+Dacorum Borough
+East Cambridgeshire
+East Hertfordshire
+Epping Forest
+Fenland
+Forest Heath
+Great Yarmouth
+Harlow
+Hertsmere
+Huntingdonshire
+Ipswich
+King's Lynn & West Norfolk
+Luton
+Maldon
+Mid Suffolk
+North Hertfordshire
+North Norfolk
+Norwich City Council
+Peterborough City Council
+Rochford
+South Cambridgeshire
+South Norfolk
+Southend-on-Sea
+St Albans
+St Edmundsbury
+Stevenage
+Suffolk Coastal
+Tendring
+Three Rivers
+Thurrock Council
+Uttlesford
+Watford
+Waveney
+Welwyn Hatfield
+Cheshire East
+Cheshire West
+Halton
+Warrington
+Allerdale
+Barrow in Furness
+Carlisle
+Copeland
+Eden
+South Lakeland
+Bolton
+Bury
+Manchester
+Oldham
+Rochdale
+Salford
+Stockport
+Tameside
+Trafford
+Wigan
+Blackburn with Darwe
+Blackpool
+Burnley
+Chorley
+Fylde
+Hyndburn
+Lancaster
+Pendle
+Preston
+Ribble Valley
+Rossendale
+South Ribble
+West Lancashire
+Wyre
+Knowsley
+Liverpool
+Sefton
+St. Helens
+Wirral
+ABERDEEN CITY
+ABERDEENSHIRE
+ANGUS
+ARGYLL & BUTE
+CLACKMANNANSHIRE
+COMHAIRLE NAN EILEAN SIAR
+DUMFRIES & GALLOWAY
+DUNDEE CITY
+EAST AYRSHIRE
+EAST DUNBARTONSHIRE
+EAST LOTHIAN
+EAST RENFREWSHIRE
+CITY OF EDINBURGH
+FALKIRK
+FIFE
+CITY OF GLASGOW
+HIGHLAND
+INVERCLYDE
+MIDLOTHIAN
+MORAY
+NORTH AYRSHIRE
+NORTH LANARKSHIRE
+ORKNEY ISLANDS
+PERTH & KINROSS
+RENFREWSHIRE
+SCOTTISH BORDERS
+SHETLAND ISLANDS
+SOUTH AYRSHIRE
+SOUTH LANARKSHIRE
+STIRLING
+WEST DUNBARTONSHIRE
+WEST LOTHIAN
+Bath & North East Somerset
+Poole
+Bournemouth
+Bristol City
+Cheltenham
+Christchurch
+Cornwall
+Cotswold
+Isles of Scilly
+East Devon
+East Dorset
+Exeter City
+Forest of Dean
+Gibraltar Parliament
+Gloucester City
+Mendip
+Mid Devon
+North Devon
+North Dorset
+North Somerset
+Plymouth City
+Purbeck
+Sedgemoor
+South Gloucestershire
+South Hams
+South Somerset
+Stroud
+Swindon
+Taunton Deane
+Teignbridge
+Tewkesbury
+Torbay
+Torridge
+West Devon
+West Dorset
+West Somerset
+Weymouth & Portland
+Wiltshire
+Blaenau Gwent
+Bridgend
+Ogmore
+Caerphilly
+Islwyn
+Cardiff Central
+Cardiff North
+Cardiff South & Penarth
+Cardiff West
+Carm East & Dinefwr
+Llanelli
+Ceredigion
+Clwyd West
+Conwy
+Vale of Clwyd
+Alyn & Deeside
+Delyn
+Caernarfon
+Meirionnydd Nant Conwy
+Ynys Mon
+Merthyr Tydfil & Rhymney
+Monmouthshire
+Aberavon
+Neath
+Newport East
+Newport West
+Carm West & South Pembs
+Preseli Pembrokeshire
+Montgomeryshire
+Brecon & Radnorshire
+Rhondda
+Cynon
+Pontypridd
+Gower
+Swansea West
+Swansea East
+Torfaen
+Vale of Glamorgan
+Wrexham
+Clwyd South
+Adur District Council
+Arun District Council
+Ashford Borough Council
+Aylesbury Vale District Council
+Basingstoke & Dean
+Bracknell Forest Borough Council
+Brighton & Hove Council
+Canterbury City Council
+Cherwell District Council
+Chichester District Council
+Chiltern District Council
+Crawley Borough Council
+Dartford Borough Council
+Dover District Council
+East Hampshire District Council
+Eastbourne Borough Council
+Eastleigh Borough Council
+Elmbridge Borough Council
+Epsom & Ewell Borough Council
+Fareham Borough Council
+Gosport Borough Council
+Gravesham Borough Council
+Guildford Borough Council
+Hart District Council
+Hastings Borough Council
+Havant Borough Council
+Horsham District Council
+Isle of Wight Council
+Lewes District Council
+Maidstone Borough Council
+Medway Council
+Mid Sussex District Council
+Milton Keynes Council
+Mole Valley District Council
+New Forest District Council
+Oxford City Council
+Portsmouth City Council
+Reading Borough Council
+Reigate & Banstead
+Rother District Council
+Runnymede Borough Council
+Rushmoor Borough Council
+Sevenoaks District Council
+Shepway District Council
+Slough Borough Council
+South Bucks District Council
+South Oxfordshire District Council
+Southampton City Council
+Spelthorne Borough Council
+Surrey Heath Borough Council
+Swale Borough Council
+Tandridge District Council
+Test Valley Borough Council
+Thanet District Council
+Tonbridge & Malling
+Tunbridge Wells Borough Council
+Vale of White Horse District Council
+Waverley Borough Council
+Wealden District Council
+West Berkshire
+West Oxfordshire District Council
+Winchester City Council
+Windsor & Maidenhead
+Woking Borough Council
+Wokingham District Council
+Worthing Borough Council
+Wycombe District Council
+Barking and Dagenham
+Barnet
+Bexley
+Brent
+Bromley
+Camden
+City of London
+Croydon
+Ealing
+Enfield
+Greenwich
+Hackney
+Hammersmith and Fulham
+Haringey
+Harrow
+Havering
+Hillingdon
+Hounslow
+Islington
+Kensington and Chelsea
+Kingston upon Thames
+Lambeth
+Lewisham
+Merton
+Newham
+Redbridge
+Richmond Upon Thames
+Southwark
+Sutton
+Tower Hamlets
+Waltham Forest
+Wandsworth
+City of Westminster
+Amber Valley
+Ashfield
+Bassetlaw
+Blaby
+Bolsover
+Boston
+Broxtowe
+Charnwood
+Chsterfield
+Corby
+Daventry
+Derby City
+Derbyshire Dales
+East Lindsey
+East Northamptonshire
+Erewash
+Gedling
+Harborough
+High Peak
+Hinckley & Bosworth
+Kettering
+Leicester City
+Lincoln City
+Mansfield
+Melton
+Newark & Sherwood
+North East Derbyshire
+Northampton
+North Kesteven
+North West Leicestershire
+Nottingham City
+Oadby & Wigston
+Rushcliffe
+Rutland
+South Derbyshire
+South Holland
+South Kesteven
+South Northamptonshire
+Wellingborough
+West Lindsey
+Barnsley
+Bradford
+Calderdale
+Craven
+Doncaster
+East Riding of Yorkshire
+Hambleton
+Harrogate
+Kingston upon Hull
+Kirklees
+Leeds
+North East Lincolnshire
+Rotherham
+Ryedale
+Richmondshire
+Scarborough
+Selby
+Sheffield
+Wakefield
+York</textarea>
+<p>Enter the data you want to match against:</p>
+<textarea id="input-against">Selby
+Derwentside
+Easington
+Durham
+Wear_Valley
+Teeside
+Sedgefield
+Stockton-on-Tees
+Middlesbrough
+Redcar_and_Cleveland
+Darlington
+Chester-le-Street
+Hambleton
+Richmondshire
+Scarborough
+Ryedale
+Tynedale
+Castle_Morpeth
+Wansbeck
+Blyth_Valley
+Eden
+Allerdale
+Copeland
+East_Riding_of_Yorkshire
+North_Lincolnshire
+York
+Lancaster
+Fylde
+South_Ribble
+Wyre
+Ribble_Valley
+Blackpool
+Test_Valley
+Bracknell_Forest
+Forest_of_Dean
+Cotswold
+Tewkesbury
+Northampton
+Corby
+Kettering
+Wellingborough
+East_Northamptonshire
+South_Northamptonshire
+Boston
+South_Kesteven
+South_Holland
+North_Kesteven
+East_Hertfordshire
+Chelmsford
+Uttlesford
+Fenland
+East_Cambridge
+Breckland
+South_Norfolk
+Broadland
+North_Norfolk
+Forest_Heath
+Mid_Suffolk
+St_Edmundsbury
+Babergh
+Suffolk_Coastal
+Braintree
+Staffordshire_Moorlands
+East_Staffordshire
+Stafford
+Ashfield
+Rushcliffe
+Gedling
+Newark_and_Sherwood
+Mansfield
+Rutland
+Hinckley_and_Bosworth
+North_West_Leicestershire
+Harborough
+Oadby_and_Wigston
+Charmwood
+Blaby
+Melton
+Lichfield
+South_Staffordshire
+South_Shropshire
+Wychavon
+Malvern_Hills
+Bridgnorth
+Vale_of_White_Horse
+Windsor_and_Maidenhead
+Dacorum
+Wycombe
+Chiltern
+South_Bucks
+Aylesbury_Vale
+South_Oxfordshire
+West_Berkshire
+Surrey_Heath
+Spelthorne
+Waverley
+East_Hampshire
+Guildford
+Chichester
+Horsham
+Arun
+Mid_Sussex
+Lewes
+Wealden
+Brighton_and_Hove
+Sevenoaks
+Dartford
+Gravesham
+Tonbridge_and_Malling
+Medway
+Rother
+Ashford
+Shepway
+Canterbury
+Dover
+Thanet
+North_East_Derbyshire
+Bolsover
+Derbyshire_Dales
+South_Derbyshire
+Erewash
+High_Peak
+North_Shropshire
+Telford_and_Wrekin
+Epsom_and_Ewell
+Mid_Bedfordshire
+Luton
+Alnwick
+Berwick-upon-Tweed
+Bath_and_North_East_Somerset
+North_Somerset
+South_Gloucestershire
+Mendip
+Kerrier
+Carrick
+Restormel
+Caradon
+Mid_Devon
+East_Devon
+Teignbridge
+South_Hams
+West_Devon
+Torridge
+North_Devon
+West_Somerset
+North_Cornwall
+Taunton_Dean
+South_Somerset
+West_Dorset
+Sedgemoor
+East_Dorset
+Bournemouth
+Christchurch
+North_Dorset
+Isle_of_Wight
+New_Forest
+Salisbury
+North_Wiltshire
+Herefordshire
+North_Warwickshire
+Warwick
+West_Wiltshire
+Kennet
+Torbay
+Leicester
+Chesterfield
+Nottingham
+East_Lindsey
+Bromsgrove
+Maldon
+Tendring
+King_x2019_s_Lynn_and_West_Norfolk
+Broxtowe
+Poole
+Oswestry
+Vale_Royal
+Crawley
+Cherwell
+West_Oxfordshire
+Stroud
+Wokingham
+Huntingdonshire
+Great_Yarmouth
+Waveney
+Havant
+Fareham
+Winchester
+Rushmoor
+Basildon
+Thurrock
+Rochford
+Brentwood
+Southend-on-Sea
+Tunbridge_Wells
+Swale
+Reigate_and_Banstead
+Tandridge
+Runnymede
+Mole_Valley
+Swindon
+Eastbourne
+Worthing
+Adur
+Peterborough
+South_Bedfordshire
+North_Hertfordshire
+Broxbourne
+Welwyn_Hatfield
+Hertsmere
+Stratford_on_Avon
+Tamworth
+Solihull
+Coventry
+Dudley
+Walsall
+Hastings
+Rossendale
+Chorley
+West_Lancashire
+Trafford
+Macclesfield
+Congleton
+Hyndburn
+Amber_Valley
+Daventry
+Bassetlaw
+Purbeck
+Castle_Point
+Shrewsbury_and_Atcham
+Westminster
+Hammersmith_and_Fulham
+Redbridge
+Havering
+Barnet
+Harrow
+Hillingdon
+Ealing
+Enfield
+Kensington_and_Chelsea
+Croydon
+Wandsworth
+Bexley
+Bromley
+Worcester
+Reading
+South_Tyneside
+Gateshead
+Sunderland
+Hartlepool
+Stevenage
+Nuneaton_and_Bedworth
+Sandwell
+Wolverhampton
+Ellesmere_Port_and_Neston
+Tameside
+Manchester
+Salford
+Wigan
+Knowsley
+Halton
+Barnsley
+Lincoln
+Sheffield
+Rotherham
+Wakefield
+Oldham
+Blackburn_with_Darwen
+Lambeth
+Greenwich
+Barking_and_Dagenham
+Newham
+Hackney
+Haringey
+Newcastle-upon-Tyne
+Cambridge
+Watford
+St._Albans
+Three_Rivers
+Pendle
+Eastleigh
+Stockport
+Liverpool
+South_Lakeland
+Richmond
+Sutton
+Kingston
+Bristol
+Penwith
+Plymouth
+Exeter
+Weymouth__x26__Portland
+Redditch
+Gloucester
+Oxford
+Cheltenham
+Bedford
+Epping_Forest
+Harlow
+Carlisle
+North_Tyneside
+Gosport
+Hart
+Basingstoke_and_Deane
+Portsmouth
+South_Cambridge
+Colchester
+Maidstone
+Woking
+Elmbridge
+Slough
+Southampton
+Wyre_Forest
+Ipswich
+Milton_Keynes
+Kingston-upon-Hull
+Rugby
+Cannock_Chase
+Birmingham
+Norwich
+Craven
+Harrogate
+Leeds
+Rochdale
+Bury
+Bolton
+Sefton
+St_Helens
+Warrington
+Crewe_and_Nantwich
+Newcastle-under-Lyme
+Chester
+Wirral
+Barrow-in-Furness
+Kirklees
+Bradford
+Calderdale
+Stoke-on-Trent
+Preston
+Derby
+North_East_Lincolnshire
+West_Lindsey
+Doncaster
+Burnley
+Southwark
+Lewisham
+Islington
+Camden
+Hounslow
+Waltham_Forest
+Brent
+Merton
+Tower_Hamlets
+Swansea
+Bridgend
+Neath_Port_Talbot
+Ceredigion
+Merther_Tydfil
+Rhondda_x2C__Cynon_x2C__Taff
+Vale_of_Glamorgan
+Blaenau_Gwent
+Monmouthshire
+Newport
+Torfaen
+Caerphilly
+Cardiff
+Powys
+Carmarthenshire
+Flintshire
+Conwy
+Denbighshire
+Pembrokeshire
+Isle_of_Anglesey
+Gwynedd
+Shetland
+Orkney
+Renfrewshire
+Inverclyde
+Moray
+West_Dunbartonshire
+Perth_and_Kinross
+Stirling
+Fife
+Clackmannanshire
+Aberdeenshire
+Highland
+Angus
+Dundee
+Aberdeen
+Falkirk
+West_Lothian
+North_Lanarkshire
+North_Ayrshire
+South_Lanarkshire
+Glasgow
+South_Ayrshire
+East_Ayrshire
+East_Renfrewshire
+Scottish_Borders
+Midlothian
+East_Lothian
+Edinburgh
+East_Dunbartonshire
+Eilean_Siar
+Argyll_and_Bute
+Dumfries_and_Galloway</textarea>
+<p>Stop phrases:</p>
+<textarea id="stopphrases">City Council
+District Council
+Borough Council
+Council</textarea>
+<p><input type="submit" value="Step two"></p>
+</form>
+
+<p id="progress"></p>
+
+<div id="matcher">
+  <form>
+  <table>
+    <tr>
+      <th>Value</th>
+      <th>Suggested match</th>
+      <th>Override</th>
+      <th>Ignore?</th>
+    </tr>
+  </table>
+  <p><input type="submit" value="Create mapping"></p>
+</div>
+
+<div id="output">
+    <textarea></textarea>
+</div>
+
+</body>
+</html>
